@@ -62,7 +62,7 @@
       <md-card-header>
         <md-card-header-text>
           <div class="md-title">{{item.message}}</div>
-          <div class="md-subhead">2043 empoints, {{item.likesCount}} likes e 4 comments</div>
+          <div class="md-subhead">{{item.empoints || 0}} empoints, {{item.likesCount || 0}} likes e {{item.commentsCount || 0}} comments</div>
         </md-card-header-text>
 
         <md-menu md-size="4" md-direction="bottom left">
@@ -137,6 +137,7 @@
 
 <script>
   import config from '../../config.js'
+  import axios from 'axios'
 
   // Substituir quando tiver auth
   var userId = 'sidharta'
@@ -177,7 +178,7 @@
       },
       confirmRemoveItem: function(answer) {
         if ( answer === 'ok' ) {
-          postsRef.child(this.subjectItem).remove()
+          postsRef.child(this.subjectItem['.key']).remove()
         }
       },
       addItem: function() {
@@ -207,10 +208,16 @@
             var updates = {}
 
             updates['/posts/' + newPostKey] = self.post
-            updates['/user-posts/' + userId + '/' + newPostKey] = self.post
 
             config.firebaseDb.ref().update(updates).then(() => {
-              this.loading = false;
+              var newMetadata = { customMetadata: { postKey: newPostKey } }
+
+              imagesRef
+                .child(this.file.name)
+                .updateMetadata(newMetadata)
+                .then(() => {
+                  self.loading = false
+                })
             })
           }
         );
@@ -275,13 +282,39 @@
         this.$forceUpdate()
       },
       commentItem: function() {
+        var self = this;
         var cObj = {
           comment: this.comment,
           user: userId,
-          date: Date.now()
+          date: Date.now(),
+          postKey: this.subjectItem['.key']
         }
 
-        commentsRef.child(this.subjectItem['.key']).push(cObj)
+        var key = commentsRef.push().key
+
+        commentsRef.child(key).update(cObj).then( () => {
+          postsRef.child(self.subjectItem['.key']).transaction(function(post) {
+            if (post) {
+              if (!post.commentsCount) {
+                post.commentsCount = 1
+              } else {
+                post.commentsCount++
+              }
+            }
+            return post
+          })
+        })
+
+        // call google function
+        axios.request(
+          {
+            url: 'https://us-central1-empappathy.cloudfunctions.net/commentAnalysis',
+            method: 'post',
+            headers: { 'Content-Type': 'application/json' },
+            data: '{"commentKey": "' + key + '"}'
+          }
+        )
+
         this.$refs.commentDialog.close()
       }
     }
