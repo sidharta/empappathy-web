@@ -27,6 +27,24 @@
       </md-dialog-actions>
     </md-dialog>
 
+    <md-dialog ref="commentDialog">
+      <md-dialog-title>Post your comment</md-dialog-title>
+
+      <md-dialog-content>
+        <form>
+          <md-input-container>
+            <label>Comment</label>
+            <md-textarea v-model="comment"></md-textarea>
+          </md-input-container>
+        </form>
+      </md-dialog-content>
+
+      <md-dialog-actions>
+        <md-button class="md-primary" @click.native="closeDialog('commentDialog')">Cancel</md-button>
+        <md-button class="md-primary" @click.native="commentItem">Create</md-button>
+      </md-dialog-actions>
+    </md-dialog>
+
     <md-dialog-confirm
       :md-title="confirm.title"
       :md-content-html="confirm.message"
@@ -48,22 +66,57 @@
               <div class="md-title">{{item.message}}</div>
               <div class="md-subhead">{{item.empoints || 0}} empoints, {{item.likesCount || 0}} likes e {{item.commentsCount || 0}} comments</div>
             </md-card-header-text>
+
+            <md-menu md-size="4" md-direction="bottom left">
+              <md-button class="md-icon-button" md-menu-trigger>
+                <md-icon>more_vert</md-icon>
+              </md-button>
+
+              <md-menu-content>
+                <md-menu-item @click.native="removeItem(item)">
+                  <span>Delete</span>
+                  <md-icon>delete</md-icon>
+                </md-menu-item>
+              </md-menu-content>
+            </md-menu>
           </md-card-header>
 
-          <md-card-actions>
-            <md-button class="md-icon-button" @click.native="removeItem(item)">
-              <md-icon>delete</md-icon>
-            </md-button>
-            <md-button class="md-icon-button" @click.native="likeItem(item)" v-if="!hasLiked(item)">
-              <md-icon>favorite</md-icon>
-            </md-button>
-            <md-button class="md-icon-button md-accent" @click.native="likeItem(item)" v-if="hasLiked(item)">
-              <md-icon>favorite</md-icon>
-            </md-button>
-            <md-button class="md-icon-button" @click.native="openComments(item)">
-              <md-icon>message</md-icon>
-            </md-button>
-          </md-card-actions>
+          <md-card-expand>
+            <md-card-actions>
+              <md-card-actions>
+                <md-button class="md-icon-button" @click.native="likeItem(item)" v-if="!hasLiked(item)">
+                  <md-icon>favorite</md-icon>
+                </md-button>
+                <md-button class="md-icon-button md-accent" @click.native="likeItem(item)" v-if="hasLiked(item)">
+                  <md-icon>favorite</md-icon>
+                </md-button>
+                <md-button class="md-icon-button" @click.native="openCommentDialog(item)">
+                  <md-icon>message</md-icon>
+                </md-button>
+              </md-card-actions>
+
+              <md-button class="md-icon-button" md-expand-trigger @click.native="loadComments(item)">
+                <md-icon>keyboard_arrow_down</md-icon>
+              </md-button>
+            </md-card-actions>
+
+            <md-card-content>
+              <md-list class="custom-list md-double-line md-dense">
+                <md-list-item v-for="c in commentsList(item)">
+                  <md-avatar>
+                    <img src="https://placeimg.com/40/40/people/1" alt="People">
+                  </md-avatar>
+
+                  <div class="md-list-text-container">
+                    <span>{{c.user}}</span>
+                    <p>{{c.comment}}</p>
+                  </div>
+
+                  <md-divider class="md-inset"></md-divider>
+                </md-list-item>
+              </md-list>
+            </md-card-content>
+          </md-card-expand>
         </md-card>
       </md-layout>
     </md-layout>
@@ -81,16 +134,20 @@
 
 <script>
   import config from '../../config.js'
+  import axios from 'axios'
   import auth from '../Auth/AuthService.js'
 
-  var userId = auth.user.email
+  // Substituir quando tiver auth
+  var userId = 'sidharta'
+
   var postsRef = config.firebaseDb.ref('posts')
+  var commentsRef = config.firebaseDb.ref('user-comments')
   var imagesRef = config.firebaseStorage.ref('user-images')
 
   export default {
     name: 'home',
     firebase: {
-      posts: postsRef.orderByChild('empoints').limitToLast(25)
+      posts: postsRef.orderByChild('user').equalTo(auth.user.email).limitToLast(25)
     },
     data: () => {
       return {
@@ -163,8 +220,9 @@
           }
         );
       },
-      openComments: function(item) {
-        this.$router.push({ name: 'comments', params: { key: item['.key'] }})
+      openCommentDialog: function(item) {
+        this.subjectItem = item
+        this.$refs.commentDialog.open()
       },
       closeDialog: function(dialog) {
         this.$refs[dialog].close()
@@ -210,6 +268,52 @@
       },
       hasLiked: (item) => {
         return item.likes !== undefined && item.likes[userId]
+      },
+      commentsList: function(item) {
+        return this[item['.key'] + '_comments']
+      },
+      loadComments: function(item) {
+        if (this.$firebaseRefs[item['.key'] + '_comments'] === undefined) {
+          this.$bindAsArray(item['.key'] + '_comments', commentsRef.child(item['.key']))
+        }
+
+        this.$forceUpdate()
+      },
+      commentItem: function() {
+        var self = this;
+        var cObj = {
+          comment: this.comment,
+          user: userId,
+          date: Date.now(),
+          postKey: this.subjectItem['.key']
+        }
+
+        var key = commentsRef.push().key
+
+        commentsRef.child(key).update(cObj).then( () => {
+          postsRef.child(self.subjectItem['.key']).transaction(function(post) {
+            if (post) {
+              if (!post.commentsCount) {
+                post.commentsCount = 1
+              } else {
+                post.commentsCount++
+              }
+            }
+            return post
+          })
+        })
+
+        // call google function
+        axios.request(
+          {
+            url: 'https://us-central1-empappathy.cloudfunctions.net/commentAnalysis',
+            method: 'post',
+            headers: { 'Content-Type': 'application/json' },
+            data: '{"commentKey": "' + key + '"}'
+          }
+        )
+
+        this.$refs.commentDialog.close()
       }
     }
   }
